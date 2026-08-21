@@ -6,6 +6,7 @@ on:
     paths:
       - 'data/**.dvc'
       - 'data/*.dvc'
+      - '**'
       - 'src/**.py'
       - 'params.yaml'
   workflow_dispatch:
