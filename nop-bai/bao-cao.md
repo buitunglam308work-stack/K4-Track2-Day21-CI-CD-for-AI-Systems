@@ -39,6 +39,7 @@ thể che giấu việc mô hình bỏ sót lớp dương.
 | AWS chưa có default VPC | Không có subnet public để chạy EC2 | Tạo VPC/subnet/route table/IGW tối thiểu, dùng t3.micro |
 | DVC local xung đột botocore | Legacy resolver chọn aiobotocore không tương thích | Chạy DVC trong Python 3.10 và nâng boto3/botocore tương thích cho lần push |
 | SSH GitHub runner bị timeout | Port 22 ban đầu chỉ cho IP máy cá nhân | Mở thêm 22 cho `0.0.0.0/0` để hosted runner deploy; đã ghi rõ rủi ro trong danh mục AWS |
+| Push GitHub không sinh run | Repo không phát push event dù đã có `paths` | Giữ trigger DVC trong workflow và dispatch tại đúng commit dữ liệu để xác minh xanh |
 
 ## 4. So sánh Bước 2 và Bước 3
 
