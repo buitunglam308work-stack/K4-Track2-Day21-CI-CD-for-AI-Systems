@@ -30,7 +30,15 @@
 hosted runner chạy `appleboy/ssh-action`; nên thu hẹp theo dải IP runner hoặc
 đóng lại sau khi chấm bài.
 
-## Teardown (chưa chạy)
+## Teardown (ĐÃ CHẠY — 21/08/2026)
+
+Toàn bộ tài nguyên AWS của lab đã được xoá sau khi thu thập xong bằng chứng nộp
+bài. Đã xác minh bằng `describe-*`: EC2 `terminated`, bucket/VPC/subnet/IGW/route
+table/security group/key pair `NotFound`, IAM user `income-lab-ci-856a783a`
+`NoSuchEntity`, và inline policy `IncomeLabS3Access` đã được gỡ khỏi `ai-lab-user`.
+Tài khoản không còn phát sinh chi phí từ lab này.
+
+Các lệnh dưới đây là bản ghi lại những gì đã chạy.
 
 Chạy lần lượt sau khi chấm bài; kiểm tra lại ID trước khi thực hiện. Lệnh xoá
 bucket sẽ xoá các object DVC/artifact trong bucket.
