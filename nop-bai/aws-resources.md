@@ -11,7 +11,6 @@
 | S3 public access block | Đủ 4 cờ `true` |
 | IAM user CI | `income-lab-ci-856a783a` |
 | IAM policy CI | `IncomeLabS3Policy-856a783a` — chỉ bucket này, prefix `dvc/` và `artifacts/` |
-| CI access key ID | `AKIA3KYWVATCXFBKS6WB` (secret không ghi) |
 | EC2 instance | `i-0d56a7eaa98e140f2`, `t3.micro`, Ubuntu 22.04, `ami-06e78a71af43ef21a` |
 | Public / private IP | `3.239.179.205` / `10.0.1.220` |
 | Key pair | `income-lab-ec2-key-856a783a`; private key local `/home/hh/.ssh/income_lab.pem`, mode 400 |
@@ -45,7 +44,7 @@ KEY_NAME=income-lab-ec2-key-856a783a
 ROLE_NAME=income-lab-ec2-role-856a783a
 PROFILE_NAME=income-lab-ec2-profile-856a783a
 LAB_USER=income-lab-ci-856a783a
-CI_KEY_ID=AKIA3KYWVATCXFBKS6WB
+CI_KEY_ID=$(aws iam list-access-keys --user-name "$LAB_USER" --query 'AccessKeyMetadata[0].AccessKeyId' --output text)
 VPC_ID=vpc-049cf62ad1658bdce
 SUBNET_ID=subnet-06bab903f8b651157
 IGW_ID=igw-0c0ca16c6854325f8
