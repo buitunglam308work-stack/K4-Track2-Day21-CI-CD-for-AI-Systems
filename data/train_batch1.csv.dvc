@@ -1,5 +1,5 @@
 outs:
-# Continuous training artifact trigger.
+# Continuous training artifact trigger; source data is on S3.
 - md5: 77c658508d27fcf6b04a6f30d8dc0eb1
   size: 1126076
   isexec: true
