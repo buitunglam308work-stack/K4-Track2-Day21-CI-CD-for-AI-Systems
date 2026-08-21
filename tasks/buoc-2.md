@@ -4,89 +4,74 @@ Mục tiêu: Mỗi khi bạn push code hoặc thay đổi dữ liệu, GitHub Ac
 
 ---
 
-## Lựa Chọn Cloud Provider
+## Nền tảng AWS được dùng trong lab
 
-Bạn có thể sử dụng **một trong ba** cloud provider sau. Các hướng dẫn trong file này lấy **GCP làm ví dụ mặc định**. Nếu dùng AWS hoặc Azure, ánh xạ theo bảng dưới đây:
+Lab này dùng Amazon S3 làm object storage và Ubuntu 22.04 trên EC2 làm VM. DVC dùng
+`dvc[s3]`, code Python dùng `boto3`, GitHub Actions xác thực bằng IAM access key và
+EC2 đọc model bằng IAM instance profile.
 
-| Khái niệm | GCP | AWS | Azure |
-|---|---|---|---|
-| Object Storage | Google Cloud Storage (GCS) | Amazon S3 | Azure Blob Storage |
-| VM | Compute Engine (GCE) | EC2 | Azure Virtual Machine |
-| CLI | `gcloud` / `gsutil` | `aws` | `az` |
-| DVC storage extra | `dvc[gs]` | `dvc[s3]` | `dvc[azure]` |
-| Cloud SDK Python | `google-cloud-storage` | `boto3` | `azure-storage-blob` |
-| Credentials | Service Account JSON | Access Key / IAM Role | Service Principal / Connection String |
+| Thành phần | AWS sử dụng |
+|---|---|
+| Object Storage | Amazon S3 |
+| VM | EC2 t3.micro |
+| CLI | `aws` |
+| DVC storage extra | `dvc[s3]` |
+| Cloud SDK Python | `boto3` |
+| Credentials | IAM access key / EC2 instance profile |
 
 ---
 
-## 2.1 Tạo Cloud Storage Bucket
+## 2.1 Tạo S3 bucket
 
-Tên bucket phải là duy nhất trên toàn bộ hệ thống của provider đã chọn. Ví dụ dưới đây dùng GCP — thay bằng lệnh tương đương nếu dùng AWS (`aws s3 mb s3://$BUCKET`) hoặc Azure (`az storage container create --name $CONTAINER`).
-
-Thay thế `<YOUR_PROJECT>` và `<BUCKET_NAME>` bằng giá trị của bạn.
+Tên bucket S3 phải duy nhất trên toàn cầu. Thay `<BUCKET_NAME>` bằng tên có tiền tố
+`income-lab-` và một chuỗi ngẫu nhiên.
 
 ```bash
-export PROJECT=<YOUR_PROJECT>
 export BUCKET=<BUCKET_NAME>
+export AWS_DEFAULT_REGION=us-east-1
 
-gsutil mb -p $PROJECT -l us-central1 gs://$BUCKET
-```
-
-Kích hoạt Cloud Storage API (chỉ cần làm một lần):
-
-```bash
-gcloud services enable storage.googleapis.com --project $PROJECT
+aws s3api create-bucket --bucket "$BUCKET" --region us-east-1
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-ownership-controls --bucket "$BUCKET" \
+  --ownership-controls Rules='[{ObjectOwnership=BucketOwnerEnforced}]'
 ```
 
 ---
 
-## 2.2 Tạo Cloud Credentials
+## 2.2 Tạo IAM credentials
 
-Mỗi provider có cơ chế xác thực riêng: GCP dùng Service Account JSON, AWS dùng IAM User Access Key hoặc IAM Role, Azure dùng Service Principal hoặc Connection String. Ví dụ dưới đây dùng GCP.
+Tạo IAM user riêng cho lab. User chỉ có `ListBucket` trên bucket và
+`GetObject`/`PutObject`/`DeleteObject` trong các prefix `dvc/` và `artifacts/`.
+Không dùng `AmazonS3FullAccess`.
 
-Service account này là danh tính duy nhất được phép truy cập bucket. Nguyên tắc quyền tối thiểu: chỉ cấp quyền cần thiết, trên đúng phạm vi cần thiết.
-
-| Role | Sử dụng | Lý do |
+| Quyền | Phạm vi | Mục đích |
 |---|---|---|
-| roles/storage.objectAdmin | Nên dùng | Cho phép đọc, ghi, xóa object bên trong bucket. DVC cần quyền này. |
-| roles/storage.admin | Không dùng | Cho phép xóa cả bucket, vi phạm nguyên tắc quyền tối thiểu. |
+| `s3:ListBucket` | đúng bucket | DVC liệt kê object |
+| `s3:GetObject`, `PutObject`, `DeleteObject` | `dvc/*`, `artifacts/*` | DVC và upload model |
 
 ```bash
-# Tạo service account
-gcloud iam service-accounts create income-lab-sa \
-  --display-name "Income Lab SA" \
-  --project $PROJECT
-
-# Cấp quyền objectAdmin chỉ trên bucket của bạn (không phải toàn bộ project)
-gsutil iam ch \
-  serviceAccount:income-lab-sa@$PROJECT.iam.gserviceaccount.com:roles/storage.objectAdmin \
-  gs://$BUCKET
-
-# Xuất file key JSON
-gcloud iam service-accounts keys create sa-key.json \
-  --iam-account income-lab-sa@$PROJECT.iam.gserviceaccount.com
+# Tạo user, gắn inline policy JSON least-privilege như mô tả ở trên,
+# rồi tạo access key. Không ghi output access key vào Git.
+aws iam create-user --user-name income-lab-ci
+aws iam put-user-policy --user-name income-lab-ci \
+  --policy-name income-lab-s3-policy --policy-document file://income-lab-s3-policy.json
+aws iam create-access-key --user-name income-lab-ci
 ```
 
-Lưu ý: `sa-key.json` tuyệt đối không được commit vào git. File này đã có trong `.gitignore`.
+Chỉ đưa access key vào GitHub Secrets hoặc biến môi trường tạm thời; tuyệt đối không
+commit access key/secret key vào Git.
 
 ---
 
-## 2.3 Cài Đặt DVC Với Cloud Storage Remote
+## 2.3 Cài Đặt DVC Với S3 remote
 
 ```bash
 dvc init
 
-# Trỏ DVC đến cloud storage (chọn một dòng theo provider):
-# GCP:   dvc remote add -d labstore gs://$BUCKET/dvc
-# AWS:   dvc remote add -d labstore s3://$BUCKET/dvc
-# Azure: dvc remote add -d labstore azure://mycontainer/dvc
-dvc remote add -d labstore gs://$BUCKET/dvc   # thay URL theo provider
+dvc remote add -d labstore s3://$BUCKET/dvc
 
-# Cấu hình credentials:
-# GCP: thêm đường dẫn service account key
-dvc remote modify labstore credentialpath sa-key.json
-# AWS: tự đọc ~/.aws/credentials hoặc biến môi trường AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-# Azure: dvc remote modify labstore connection_string "<YOUR_CONNECTION_STRING>"
+# DVC tự đọc AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY và AWS_DEFAULT_REGION.
 
 # Theo dõi các file dữ liệu bằng DVC
 dvc add data/train_batch1.csv
@@ -102,33 +87,21 @@ git commit -m "feat: track datasets with DVC"
 dvc push
 ```
 
-Xác nhận trên Cloud Storage Console rằng các file dữ liệu đã xuất hiện dưới prefix `dvc/` trong bucket.
+Xác nhận bằng `aws s3 ls s3://$BUCKET/dvc/ --recursive` rằng dữ liệu đã xuất hiện.
 
 ---
 
 ## 2.4 Tạo VM Trên Cloud
 
-Ví dụ dưới đây dùng GCE (GCP). Tương đương: AWS EC2 (`aws ec2 run-instances ...`) hoặc Azure VM (`az vm create ...`). Sau khi tạo, lấy IP công khai để dùng cho GitHub Secrets.
+Tạo EC2 `t3.micro` với Ubuntu 22.04 LTS, key pair mới, security group cho SSH và
+port 8080, đồng thời gắn instance profile chỉ đọc `artifacts/*`.
 
 ```bash
-gcloud compute instances create income-api \
-  --zone=us-central1-a \
-  --machine-type=e2-small \
-  --image-family=ubuntu-2204-lts \
-  --image-project=ubuntu-os-cloud \
-  --tags=income-api \
-  --project $PROJECT
-
-# Mở cổng 8080 cho inference API
-gcloud compute firewall-rules create allow-income-api \
-  --allow=tcp:8080 \
-  --target-tags=income-api \
-  --project $PROJECT
-
-# Lấy IP công khai của VM (lưu lại, cần dùng cho GitHub Secrets)
-gcloud compute instances describe income-api \
-  --zone=us-central1-a \
-  --format='get(networkInterfaces[0].accessConfigs[0].natIP)'
+aws ec2 run-instances --image-id <UBUNTU_22_04_AMI> --instance-type t3.micro \
+  --key-name income-lab-ec2 --security-group-ids <SG_ID> \
+  --iam-instance-profile Name=income-lab-ec2-profile
+aws ec2 describe-instances --instance-ids <INSTANCE_ID> \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
 ```
 
 ---
@@ -138,14 +111,16 @@ gcloud compute instances describe income-api \
 SSH vào VM:
 
 ```bash
-gcloud compute ssh income-api --zone=us-central1-a
+ssh -i ~/.ssh/income_lab.pem ubuntu@<EC2_PUBLIC_IP>
 ```
 
 Bên trong VM, cài đặt các thư viện cần thiết:
 
 ```bash
-sudo apt update && sudo apt install -y python3-pip
-pip3 install fastapi uvicorn scikit-learn joblib google-cloud-storage
+sudo apt update && sudo apt install -y python3-pip python3-venv
+python3 -m venv ~/venv
+~/venv/bin/pip install fastapi==0.111.0 uvicorn==0.29.0 \
+  scikit-learn==1.4.2 joblib==1.4.2 boto3 pandas==2.2.2
 
 mkdir -p ~/models ~/src
 ```
@@ -153,8 +128,7 @@ mkdir -p ~/models ~/src
 Thoát khỏi VM, sau đó copy file key lên VM:
 
 ```bash
-gcloud compute scp sa-key.json income-api:~/sa-key.json \
-  --zone=us-central1-a
+scp -i ~/.ssh/income_lab.pem src/serve.py ubuntu@<EC2_PUBLIC_IP>:~/src/serve.py
 ```
 
 ---
@@ -171,8 +145,7 @@ Nhiệm vụ:
 ```python
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-# Cloud SDK: google-cloud-storage (GCP) | boto3 (AWS) | azure-storage-blob (Azure)
-from google.cloud import storage   # thay bằng SDK của provider đã chọn
+import boto3
 import joblib
 import os
 
@@ -185,13 +158,10 @@ MODEL_PATH = os.path.expanduser("~/models/model.joblib")
 
 
 def download_model():
-    """Tải file model.joblib từ cloud storage về máy khi server khởi động."""
-    # TODO 2.6.1: Tạo một storage.Client()
-    # TODO 2.6.2: Lấy bucket bằng client.bucket(ARTIFACT_BUCKET)
-    # TODO 2.6.3: Lấy blob bằng bucket.blob(MODEL_KEY)
-    # TODO 2.6.4: Tải file xuống bằng blob.download_to_filename(MODEL_PATH)
-    # TODO 2.6.5: In thông báo thành công
-    pass  # xóa dòng này khi đã viết xong
+    """Tải file model.joblib từ S3 về máy khi server khởi động."""
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    boto3.client("s3").download_file(ARTIFACT_BUCKET, MODEL_KEY, MODEL_PATH)
+    print("Model da duoc tai xuong tu Amazon S3.")
 
 
 # Gọi hàm này khi module được import (chạy khi server khởi động)
@@ -236,8 +206,7 @@ if __name__ == "__main__":
 Upload file `serve.py` lên VM:
 
 ```bash
-gcloud compute scp src/serve.py income-api:~/src/serve.py \
-  --zone=us-central1-a
+scp -i ~/.ssh/income_lab.pem src/serve.py ubuntu@<EC2_PUBLIC_IP>:~/src/serve.py
 ```
 
 ---
@@ -247,7 +216,7 @@ gcloud compute scp src/serve.py income-api:~/src/serve.py \
 SSH trở lại vào VM:
 
 ```bash
-gcloud compute ssh income-api --zone=us-central1-a
+ssh -i ~/.ssh/income_lab.pem ubuntu@<EC2_PUBLIC_IP>
 ```
 
 Tạo file service để server tự động khởi động lại khi VM reboot:
@@ -259,11 +228,10 @@ Description=Income Model Inference Server
 After=network.target
 
 [Service]
-User=$USER
-WorkingDirectory=/home/$USER
+User=ubuntu
+WorkingDirectory=/home/ubuntu
 Environment="ARTIFACT_BUCKET=<YOUR_BUCKET_NAME>"
-Environment="GOOGLE_APPLICATION_CREDENTIALS=/home/$USER/sa-key.json"
-ExecStart=/usr/bin/python3 /home/$USER/src/serve.py
+ExecStart=/home/ubuntu/venv/bin/python /home/ubuntu/src/serve.py
 Restart=always
 RestartSec=5
 
@@ -289,11 +257,11 @@ Chạy trên máy tính cá nhân (không phải VM):
 ssh-keygen -t ed25519 -f ~/.ssh/income_deploy -N "" -C "github-actions-deploy"
 ```
 
-Thêm public key vào VM:
+Thêm public key vào EC2:
 
 ```bash
-gcloud compute ssh income-api --zone=us-central1-a \
-  --command "echo '$(cat ~/.ssh/income_deploy.pub)' >> ~/.ssh/authorized_keys"
+ssh -i ~/.ssh/income_lab.pem ubuntu@<EC2_PUBLIC_IP> \
+  "echo '$(cat ~/.ssh/income_deploy.pub)' >> ~/.ssh/authorized_keys"
 ```
 
 ---
@@ -302,15 +270,16 @@ gcloud compute ssh income-api --zone=us-central1-a \
 
 Vào repo GitHub: Settings > Secrets and variables > Actions > New repository secret.
 
-Thêm chính xác 5 secrets sau:
+Thêm chính xác 6 secrets sau:
 
 | Tên secret | Cách lấy giá trị |
 |---|---|
-| STORAGE_CREDENTIALS | GCP: toàn bộ nội dung `sa-key.json` (JSON). AWS: `{"aws_access_key_id":"...","aws_secret_access_key":"..."}`. Azure: Connection String. |
-| ARTIFACT_BUCKET | Tên bucket / container (ví dụ: `my-income-bucket`) |
-| SERVER_HOST | IP công khai của VM (từ bước 2.4) |
-| SERVER_USER | Tên user trên VM (chạy `echo $USER` trong session SSH trên VM) |
-| SERVER_SSH_KEY | Dán toàn bộ nội dung `~/.ssh/income_deploy` (private key, bắt đầu bằng `-----BEGIN OPENSSH PRIVATE KEY-----`) |
+| `AWS_ACCESS_KEY_ID` | Access key của IAM user `income-lab-ci` |
+| `AWS_SECRET_ACCESS_KEY` | Secret key của IAM user `income-lab-ci` |
+| `ARTIFACT_BUCKET` | Tên bucket S3 |
+| `SERVER_HOST` | IP công khai của EC2 |
+| `SERVER_USER` | `ubuntu` |
+| `SERVER_SSH_KEY` | Toàn bộ private key `~/.ssh/income_lab.pem` |
 
 Kiểm tra: Mỗi secret khi dán vào phải không có khoảng trắng ở đầu hoặc cuối.
 
@@ -453,12 +422,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Authenticate to Cloud Storage
-        # TODO 2.11.2: Ghi nội dung secret STORAGE_CREDENTIALS ra file tạm
-        #   và set biến môi trường xác thực tương ứng:
-        #   GCP: GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json
-        #   AWS: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-        #   Azure: AZURE_STORAGE_CONNECTION_STRING
+      - name: Authenticate to Amazon S3
+        # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY lấy từ GitHub Secrets.
         run: |
           # <điền code ở đây>
 
@@ -477,9 +442,8 @@ jobs:
         run: |
           # <điền code ở đây>
 
-      - name: Upload model to Cloud Storage
-        # TODO 2.11.5: Sử dụng google-cloud-storage SDK để upload
-        #   file models/model.joblib lên gs://<bucket>/artifacts/current/model.joblib
+      - name: Upload model to Amazon S3
+        # Sử dụng boto3 upload lên s3://<bucket>/artifacts/current/model.joblib.
         run: |
           python - <<'PYEOF'
           # <điền code Python ở đây>
@@ -552,8 +516,8 @@ Theo dõi pipeline trong tab **Actions** trên repo GitHub.
 Sau khi pipeline chạy thành công và model đã được upload lên cloud storage, khởi động service trên VM:
 
 ```bash
-gcloud compute ssh income-api --zone=us-central1-a \
-  --command "sudo systemctl start income-api"
+ssh -i ~/.ssh/income_lab.pem ubuntu@<EC2_PUBLIC_IP> \
+  "sudo systemctl start income-api"
 ```
 
 Thử nghiệm endpoint:
@@ -598,21 +562,16 @@ Lưu ý: kết quả cụ thể phụ thuộc vào mô hình bạn huấn luyệ
 
 **`dvc push` thất bại với lỗi xác thực**
 
-Xác nhận `sa-key.json` tồn tại và `credentialpath` đã được đặt đúng. Kiểm tra bằng:
+Xác nhận biến `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` và `AWS_DEFAULT_REGION` đã được đặt. Kiểm tra remote bằng:
 
 ```bash
 cat .dvc/config
 ```
 
-Nếu chưa có mục `credentialpath`, chạy lại:
-
-```bash
-dvc remote modify labstore credentialpath sa-key.json
-```
-
 **GitHub Actions `dvc pull` thất bại**
 
-Secret `STORAGE_CREDENTIALS` phải là toàn bộ nội dung JSON (GCP) hoặc chuỗi tương đương của provider. Mở secret trong GitHub Settings và xác nhận nội dung hợp lệ.
+Kiểm tra sáu GitHub Secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ARTIFACT_BUCKET`,
+`SERVER_HOST`, `SERVER_USER` và `SERVER_SSH_KEY`, rồi xác nhận IAM policy trỏ đúng bucket.
 
 **Job Release thất bại dù f1_score có vẻ đủ cao**
 
@@ -635,7 +594,7 @@ sudo journalctl -u income-api -n 50
 
 Nguyên nhân phổ biến:
 - Biến môi trường `ARTIFACT_BUCKET` sai trong file service.
-- `sa-key.json` chưa được copy lên VM.
+- EC2 instance profile chưa được gắn hoặc chưa có quyền `s3:GetObject` trên `artifacts/*`.
 - File model chưa tồn tại trên cloud storage (service chỉ có thể khởi động sau khi pipeline lần đầu tiên chạy thành công).
 
 ---
@@ -645,7 +604,7 @@ Nguyên nhân phổ biến:
 - Cả bốn GitHub Actions jobs (Unit Test, Train, Quality Gate, Release) đều hoàn thành thành công (màu xanh).
 - `curl http://VM_IP:8080/healthz` trả về `{"status": "ok"}`.
 - `curl http://VM_IP:8080/score` trả về kết quả dự đoán hợp lệ.
-- Cloud Storage Console hiển thị file dữ liệu dưới `dvc/` và file model dưới `artifacts/current/model.joblib`.
+- S3 hiển thị object dưới prefix `dvc/` và model tại `artifacts/current/model.joblib`.
 
 Chụp ba ảnh nộp bài, lưu vào `nop-bai/anh-chup-man-hinh/` (yêu cầu chi tiết:
 [nop-bai/anh-chup-man-hinh/README.md](../nop-bai/anh-chup-man-hinh/README.md)):
