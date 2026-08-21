@@ -35,18 +35,20 @@ thể che giấu việc mô hình bỏ sót lớp dương.
 | Khó khăn | Nguyên nhân | Cách giải quyết |
 |---|---|---|
 | Python host là 3.13 | sklearn 1.4.2 không có wheel phù hợp | Chạy reproducible bằng container Python 3.10 |
-| DVC/GitHub cần AWS | `ai-lab-user` thiếu `s3:CreateBucket` | Dừng trước khi tạo tài nguyên, ghi rõ quyền cần cấp |
-| Model serving cần S3 | Chưa có bucket/EC2 | Test API bằng fake S3 và model thật, chờ quyền AWS |
+| DVC/GitHub cần AWS | Quyền S3 ban đầu thiếu `s3:CreateBucket` | Quyền được cấp; tạo bucket có prefix `income-lab-` và IAM CI least-privilege |
+| AWS chưa có default VPC | Không có subnet public để chạy EC2 | Tạo VPC/subnet/route table/IGW tối thiểu, dùng t3.micro |
+| DVC local xung đột botocore | Legacy resolver chọn aiobotocore không tương thích | Chạy DVC trong Python 3.10 và nâng boto3/botocore tương thích cho lần push |
+| SSH GitHub runner bị timeout | Port 22 ban đầu chỉ cho IP máy cá nhân | Mở thêm 22 cho `0.0.0.0/0` để hosted runner deploy; đã ghi rõ rủi ro trong danh mục AWS |
 
 ## 4. So sánh Bước 2 và Bước 3
 
 | | f1_score | accuracy |
 |---|---:|---:|
-| Bước 2 (train_batch1) | Chưa chạy | Chưa chạy |
-| Bước 3 (thêm train_batch2) | Chưa chạy | Chưa chạy |
+| Bước 2 (train_batch1, 22.361 mẫu) | 0.7149321267 | 0.874 |
+| Bước 3 (train_batch1 sau append, 44.722 mẫu) | 0.7354260090 | 0.882 |
 
-**Nhận xét:** Hai bước chưa thể đo vì AWS chặn ở `s3:CreateBucket`; không bịa số
-liệu hoặc giả lập pipeline.
+**Nhận xét:** Bước 3 tăng F1 khoảng 0.0205 và accuracy 0.008. Run CI/CD Bước 2:
+`32482692945`; Bước 3: `32483195785` (cả hai đều xanh đủ 4 job).
 
 ## 5. Bonus
 
