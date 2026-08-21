@@ -39,6 +39,7 @@ thể che giấu việc mô hình bỏ sót lớp dương.
 | AWS chưa có default VPC | Không có subnet public để chạy EC2 | Tạo VPC/subnet/route table/IGW tối thiểu, dùng t3.micro |
 | DVC local xung đột botocore | Legacy resolver chọn aiobotocore không tương thích | Chạy DVC trong Python 3.10 và nâng boto3/botocore tương thích cho lần push |
 | SSH GitHub runner bị timeout | Port 22 ban đầu chỉ cho IP máy cá nhân | Mở thêm 22 cho `0.0.0.0/0` để hosted runner deploy; đã ghi rõ rủi ro trong danh mục AWS |
+| Push không kích hoạt pipeline | Repo là **fork**, GitHub tắt workflow tự động cho tới khi bật thủ công một lần | Bật Actions trong tab Actions của repo; sau đó commit dữ liệu kích hoạt pipeline hoàn toàn tự động |
 | Push GitHub không sinh run | Repo không phát push event dù đã có `paths` | Giữ trigger DVC trong workflow và dispatch tại đúng commit dữ liệu để xác minh xanh |
 
 ## 4. So sánh Bước 2 và Bước 3
@@ -48,8 +49,12 @@ thể che giấu việc mô hình bỏ sót lớp dương.
 | Bước 2 (train_batch1, 22.361 mẫu) | 0.7149321267 | 0.874 |
 | Bước 3 (train_batch1 sau append, 44.722 mẫu) | 0.7354260090 | 0.882 |
 
-**Nhận xét:** Bước 3 tăng F1 khoảng 0.0205 và accuracy 0.008. Run CI/CD Bước 2:
-`32482692945`; Bước 3: `32483195785` (cả hai đều xanh đủ 4 job).
+**Nhận xét:** Bước 3 tăng F1 khoảng 0.0205 và accuracy 0.008 nhờ gấp đôi dữ liệu
+huấn luyện. Cả hai run đều do **commit dữ liệu tự động kích hoạt** (event `push`,
+không dùng `workflow_dispatch`) và đều xanh đủ 4 job:
+
+- Bước 2 — run `32484757261`, commit `09033fd` (22.361 mẫu)
+- Bước 3 — run `32485061096`, commit `792cfa3` (44.722 mẫu)
 
 ## 5. Bonus
 
